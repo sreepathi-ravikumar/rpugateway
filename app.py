@@ -6,6 +6,7 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend-backend connection
 
 prompt = None  # Global variable
+final_result = None  # Add this on top
 
 @app.route('/api/submit', methods=['POST'])
 def receive_input():
@@ -22,10 +23,17 @@ def get_string():
 
 @app.route('/api/receive', methods=['POST'])
 def receive():
+    global final_result
     data = request.get_json()
     final_string = data.get("final")
+    final_result = final_string
     print("Received from frontend:", final_string)
     return jsonify({"message": f"Python received final string: {final_string}"})
+    
+@app.route('/api/final', methods=['GET'])
+def get_final():
+    global final_result
+    return jsonify({"result": final_result})
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
