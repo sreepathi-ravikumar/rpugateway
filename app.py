@@ -6,6 +6,10 @@ import os
 import tempfile
 import uuid
 from datetime import datetime
+import nest_asyncio
+
+# Allow nested event loops
+nest_asyncio.apply()
 
 app = Flask(__name__)
 CORS(app)
@@ -28,15 +32,19 @@ async def generate_speech(text, voice, rate, pitch):
     filename = f"{uuid.uuid4()}.mp3"
     filepath = os.path.join(TEMP_DIR, filename)
     
-    communicate = edge_tts.Communicate(
-        text=text,
-        voice=voice,
-        rate=rate,
-        pitch=pitch
-    )
-    
-    await communicate.save(filepath)
-    return filepath
+    try:
+        communicate = edge_tts.Communicate(
+            text=text,
+            voice=voice,
+            rate=rate,
+            pitch=pitch
+        )
+        
+        await communicate.save(filepath)
+        return filepath
+    except Exception as e:
+        print(f"Error in generate_speech: {e}")
+        raise
 
 @app.route('/')
 def home():
@@ -56,6 +64,7 @@ def get_voices():
 @app.route('/synthesize', methods=['POST'])
 def synthesize():
     """Convert text to speech"""
+    filepath = None
     try:
         data = request.get_json()
         
@@ -70,13 +79,23 @@ def synthesize():
         # Get voice from key
         voice = VOICES.get(voice_key, VOICES['female_us'])
         
-        # Generate speech
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        filepath = loop.run_until_complete(generate_speech(text, voice, rate, pitch))
-        loop.close()
+        print(f"Generating speech for text: {text[:50]}... with voice: {voice}")
         
-        # Send file and delete after
+        # Generate speech using asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        filepath = loop.run_until_complete(generate_speech(text, voice, rate, pitch))
+        
+        print(f"Speech generated at: {filepath}")
+        
+        if not os.path.exists(filepath):
+            raise Exception("Audio file was not created")
+        
+        # Send file
         response = send_file(
             filepath,
             mimetype='audio/mpeg',
@@ -88,15 +107,23 @@ def synthesize():
         @response.call_on_close
         def cleanup():
             try:
-                if os.path.exists(filepath):
+                if filepath and os.path.exists(filepath):
                     os.remove(filepath)
+                    print(f"Cleaned up file: {filepath}")
             except Exception as e:
                 print(f"Error deleting file: {e}")
         
         return response
         
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"Error in synthesize endpoint: {str(e)}")
+        # Clean up file if it exists
+        if filepath and os.path.exists(filepath):
+            try:
+                os.remove(filepath)
+            except:
+                pass
+        return jsonify({"error": str(e), "details": "Check server logs for more info"}), 500
 
 @app.route('/health', methods=['GET'])
 def health():
