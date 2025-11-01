@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, send_file
-from gtts import gTTS
+import edge_tts
+import asyncio
 import io
 import os
 import tempfile
@@ -11,10 +12,10 @@ CORS(app)  # Enable CORS for all routes
 @app.route('/')
 def home():
     return jsonify({
-        "message": "Text to Speech API is running!",
+        "message": "Text to Speech API with Edge TTS is running!",
         "usage": "Send a POST request to /speak with JSON containing 'text' field",
         "endpoints": {
-            "/speak": "Convert text to speech (returns audio file)",
+            "/speak": "Convert text to speech using Edge TTS (returns audio file)",
             "/process": "Original text processing endpoint"
         }
     })
@@ -43,7 +44,7 @@ def process_text():
 
 @app.route('/speak', methods=['POST'])
 def text_to_speech():
-    """New endpoint that converts text to speech"""
+    """New endpoint that converts text to speech using Edge TTS"""
     try:
         data = request.get_json()
         
@@ -56,15 +57,15 @@ def text_to_speech():
         if len(text.strip()) == 0:
             return jsonify({"error": "Text cannot be empty"}), 400
         
-        if len(text) > 1000:
-            return jsonify({"error": "Text too long. Maximum 1000 characters."}), 400
+        if len(text) > 3000:
+            return jsonify({"error": "Text too long. Maximum 3000 characters."}), 400
         
-        # Create gTTS object
-        tts = gTTS(text=text, lang='en', slow=False)
+        # Run the async function
+        audio_data = asyncio.run(generate_speech(text))
         
         # Save to temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_file:
-            tts.save(tmp_file.name)
+            tmp_file.write(audio_data)
             temp_filename = tmp_file.name
         
         # Return the audio file
@@ -75,6 +76,45 @@ def text_to_speech():
             mimetype='audio/mpeg'
         )
     
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+async def generate_speech(text, voice="en-US-AriaNeural"):
+    """
+    Generate speech using Edge TTS
+    Available voices: en-US-AriaNeural, en-US-JennyNeural, en-GB-SoniaNeural, etc.
+    """
+    try:
+        communicate = edge_tts.Communicate(text, voice)
+        
+        # Collect audio data
+        audio_chunks = []
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_chunks.append(chunk["data"])
+        
+        # Combine all audio chunks
+        return b''.join(audio_chunks)
+        
+    except Exception as e:
+        raise Exception(f"Edge TTS error: {str(e)}")
+
+@app.route('/voices', methods=['GET'])
+def get_voices():
+    """Get available Edge TTS voices"""
+    try:
+        # This would typically require an async function
+        # For simplicity, returning some common voices
+        common_voices = [
+            "en-US-AriaNeural",
+            "en-US-JennyNeural", 
+            "en-US-GuyNeural",
+            "en-GB-SoniaNeural",
+            "en-GB-RyanNeural",
+            "en-AU-NatashaNeural",
+            "en-AU-WilliamNeural"
+        ]
+        return jsonify({"voices": common_voices})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
